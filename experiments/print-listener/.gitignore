@@ -1,0 +1,16 @@
+# Runtime artifacts — never commit
+logs/
+*.log
+
+# NSSM binary — download separately from https://nssm.cc
+tools/nssm.exe
+tools/*.exe
+
+# Windows artifacts
+Thumbs.db
+Desktop.ini
+
+# Editor artifacts
+.vscode/
+*.suo
+*.user
