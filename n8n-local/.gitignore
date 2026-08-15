@@ -1,0 +1,25 @@
+# n8n Local Deployment
+
+# Ignore environment files with secrets
+.env
+.env.local
+.env.*.local
+
+# Ignore Docker volumes (local data)
+postgres_data/
+n8n_data/
+
+# Ignore local logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
