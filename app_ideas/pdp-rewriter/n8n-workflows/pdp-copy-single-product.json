@@ -1,0 +1,199 @@
+{
+  "name": "PDP Copy - Single Product Rewrite",
+  "description": "Rewrites a single Shopify product description using OpenAI or Claude, generates SEO meta title/description, and auto-publishes",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "/pdp-copy/rewrite",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 100],
+      "webhookId": "{{ $env.WEBHOOK_ID }}"
+    },
+    {
+      "parameters": {
+        "url": "https://{{ $env.SHOPIFY_DOMAIN }}/admin/api/2024-01/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "credentialType": "shopify",
+        "requestMethod": "POST",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"query\": \"query($id: ID!) { product(id: $id) { id title description category { name } handle } }\",\n  \"variables\": { \"id\": \"{{ $json.productId }}\" }\n}",
+        "options": {}
+      },
+      "id": "fetch-product",
+      "name": "Fetch Shopify Product",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Extract product data for AI processing\nconst product = $json.body.data.product;\n\nreturn {\n  productId: product.id,\n  title: product.title,\n  currentDescription: product.description || 'No description provided',\n  category: product.category?.name || 'General',\n  handle: product.handle,\n  brandVoice: $json.brandVoice || 'Professional',\n  keywords: $json.keywords || '',\n  length: $json.length || 'Medium'\n};"
+      },
+      "id": "prepare-ai-input",
+      "name": "Prepare AI Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 100]
+    },
+    {
+      "parameters": {
+        "model": "{{ $json.aiProvider === 'claude' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o' }}",
+        "prompt": "You are a professional e-commerce copywriter specializing in product descriptions. \n\nBrand Voice: {{ $json.brandVoice }}\nProduct Category: {{ $json.category }}\nCurrent Description: {{ $json.currentDescription }}\nKeywords to include: {{ $json.keywords }}\nDesired Length: {{ $json.length }} (Short: 100-150 words, Medium: 200-300 words, Long: 400-500 words)\n\nYour task:\n1. Rewrite the product description to be compelling, conversion-focused, and in the specified brand voice\n2. Include primary benefits upfront\n3. Highlight key features with benefits\n4. Include a subtle call-to-action at the end\n5. Optimize for the provided keywords without keyword stuffing\n6. Make it scannable with short sentences and paragraphs\n\nRespond ONLY with the rewritten description, no additional text.",
+        "options": {}
+      },
+      "id": "ai-rewrite-description",
+      "name": "AI Rewrite Description",
+      "type": "n8n-nodes-base.openaiText",
+      "typeVersion": 3,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "model": "{{ $json.aiProvider === 'claude' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o' }}",
+        "prompt": "Generate SEO-optimized meta tags for an e-commerce product.\n\nProduct Title: {{ $json.title }}\nProduct Description: {{ $json.currentDescription }}\nPrimary Keyword: {{ $json.keywords.split(',')[0] || $json.title }}\nCategory: {{ $json.category }}\n\nYour task:\n1. Create a Meta Title (50-60 characters max) that includes the primary keyword\n2. Create a Meta Description (150-160 characters max) that includes the primary keyword and a subtle call-to-action\n\nRespond ONLY in this JSON format:\n{\n  \"metaTitle\": \"your meta title here\",\n  \"metaDescription\": \"your meta description here\"\n}",
+        "options": {}
+      },
+      "id": "ai-generate-seo",
+      "name": "AI Generate SEO Meta Tags",
+      "type": "n8n-nodes-base.openaiText",
+      "typeVersion": 3,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Parse AI responses and prepare for Shopify update\nconst rewrittenDescription = $json.output || $json.body;\nconst seoRaw = $json.body;\n\nlet seoData = { metaTitle: '', metaDescription: '' };\n\n// Try to parse SEO response as JSON\ntry {\n  const jsonMatch = seoRaw.match(/\\{[^}]+\\}/);\n  if (jsonMatch) {\n    seoData = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  // If JSON parsing fails, try to extract text\n  const lines = seoRaw.split('\\n');\n  seoData.metaTitle = lines[0]?.replace(/Meta Title:|:/, '').trim() || '';\n  seoData.metaDescription = lines[1]?.replace(/Meta Description:|:/, '').trim() || '';\n}\n\nreturn {\n  rewrittenDescription,\n  metaTitle: seoData.metaTitle.substring(0, 60),\n  metaDescription: seoData.metaDescription.substring(0, 160),\n  productId: $json.productId,\n  handle: $json.handle,\n  previousDescription: $json.currentDescription\n};"
+      },
+      "id": "parse-ai-output",
+      "name": "Parse AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 100]
+    },
+    {
+      "parameters": {
+        "url": "https://{{ $env.SHOPIFY_DOMAIN }}/admin/api/2024-01/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "credentialType": "shopify",
+        "requestMethod": "POST",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"query\": \"mutation($input: ProductInput!) { productUpdate(input: $input) { product { id } errors } }\",\n  \"variables\": {\n    \"input\": {\n      \"id\": \"{{ $json.productId }}\",\n      \"descriptionHtml\": \"{{ $json.rewrittenDescription }}\",\n      \"metafields\": [\n        {\n          \"namespace\": \"custom\",\n          \"key\": \"seo_title\",\n          \"value\": \"{{ $json.metaTitle }}\",\n          \"type\": \"single_line_text_field\"\n        },\n        {\n          \"namespace\": \"custom\",\n          \"key\": \"seo_description\",\n          \"value\": \"{{ $json.metaDescription }}\",\n          \"type\": \"single_line_text_field\"\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "publish-to-shopify",
+      "name": "Publish to Shopify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1750, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Log the execution and prepare response\nconst timestamp = new Date().toISOString();\n\nreturn {\n  success: true,\n  message: 'Product description rewritten and published successfully',\n  details: {\n    productId: $json.productId,\n    handle: $json.handle,\n    timestamp,\n    changes: {\n      description: 'Updated',\n      metaTitle: $json.metaTitle,\n      metaDescription: $json.metaDescription\n    },\n    previousDescription: $json.previousDescription\n  }\n};"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 100]
+    }
+  ],
+  "connections": {
+    "webhook-trigger": {
+      "main": [
+        [
+          {
+            "node": "fetch-product",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fetch-product": {
+      "main": [
+        [
+          {
+            "node": "prepare-ai-input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-ai-input": {
+      "main": [
+        [
+          {
+            "node": "ai-rewrite-description",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "ai-generate-seo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ai-rewrite-description": {
+      "main": [
+        [
+          {
+            "node": "parse-ai-output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ai-generate-seo": {
+      "main": [
+        [
+          {
+            "node": "parse-ai-output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parse-ai-output": {
+      "main": [
+        [
+          {
+            "node": "publish-to-shopify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "publish-to-shopify": {
+      "main": [
+        [
+          {
+            "node": "prepare-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "UTC",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "executionOrder": "v1"
+  },
+  "notes": "This workflow processes a single product rewrite request. Setup instructions:\n1. Create Shopify private app with scopes: write_products, read_products, write_metafields\n2. Set environment variables: SHOPIFY_DOMAIN, WEBHOOK_ID, OPENAI_API_KEY, CLAUDE_API_KEY\n3. Configure credentials in n8n for Shopify and OpenAI/Claude\n4. Send POST request with JSON: { productId, aiProvider, brandVoice, keywords, length }\n5. Workflow will rewrite and auto-publish to Shopify"
+}

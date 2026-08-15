@@ -1,0 +1,79 @@
+{
+  "name": "PDP Copy - Voice Training Setup",
+  "description": "Learns brand voice from uploaded product descriptions. Analyzes tone, length, structure, and keywords to create a brand voice profile",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "/pdp-copy/voice-training",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-voice-trigger",
+      "name": "Webhook: Training Data",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Parse uploaded training descriptions\nconst descriptions = $json.descriptions || [];\nconst storeId = $json.storeId;\n\nreturn {\n  storeId,\n  descriptions: descriptions.map(desc => ({\n    text: desc,\n    wordCount: desc.split(' ').length,\n    charCount: desc.length,\n    sentences: desc.split('. ').length\n  })),\n  totalSamples: descriptions.length,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "prepare-training-data",
+      "name": "Prepare Training Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 100]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "prompt": "Analyze these product descriptions and identify the brand voice characteristics. Provide insights on:\n1. Tone (professional, casual, luxury, technical, etc.)\n2. Average sentence length\n3. Commonly used words/phrases\n4. Call-to-action style\n5. Keyword focus areas\n6. Typical structure/format\n\nDescriptions to analyze:\n{{ $json.descriptions.map(d => d.text).join('\\n---\\n') }}\n\nRespond in JSON format:\n{\n  \"tone\": \"description\",\n  \"avgSentenceLength\": number,\n  \"commonPhrases\": [\"phrase1\", \"phrase2\"],\n  \"ctaStyle\": \"description\",\n  \"keywordFocus\": [\"keyword1\", \"keyword2\"],\n  \"structure\": \"description\",\n  \"avgWordCount\": number,\n  \"profile_summary\": \"2-3 sentence summary\"\n}",
+        "options": {}
+      },
+      "id": "analyze-voice",
+      "name": "Analyze Brand Voice",
+      "type": "n8n-nodes-base.openaiText",
+      "typeVersion": 3,
+      "position": [750, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Parse voice analysis and create profile\nconst voiceData = $json.body;\nlet profile = {};\n\ntry {\n  // Try to extract JSON from response\n  const jsonMatch = voiceData.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    profile = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  // Fallback if parsing fails\n  profile = {\n    tone: 'Unknown',\n    avgSentenceLength: 15,\n    commonPhrases: [],\n    ctaStyle: 'Standard',\n    keywordFocus: [],\n    structure: 'Not analyzed',\n    avgWordCount: 200,\n    profile_summary: 'Voice analysis pending manual review'\n  };\n}\n\nreturn {\n  storeId: $json.storeId,\n  voiceProfile: {\n    ...profile,\n    createdAt: new Date().toISOString(),\n    status: 'active'\n  },\n  sampleCount: $json.totalSamples\n};"
+      },
+      "id": "create-voice-profile",
+      "name": "Create Voice Profile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "collection": "voice_profiles",
+        "mode": "upsert",
+        "key": "storeId",
+        "dataToInsert": "{{ { storeId: $json.storeId, profile: $json.voiceProfile, lastUpdated: new Date().toISOString() } }}",
+        "options": {}
+      },
+      "id": "save-profile-db",
+      "name": "Save Profile to Database",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Generate training report\nreturn {\n  success: true,\n  message: 'Brand voice profile created successfully',\n  report: {\n    storeId: $json.storeId,\n    profileStatus: 'active',\n    voiceProfile: $json.voiceProfile,\n    nextSteps: [\n      'Use this voice profile when rewriting descriptions',\n      'Test with 5-10 products to validate tone',\n      'Refine or retrain if needed'\n    ],\n    usageInstructions: 'Include brandVoiceProfile parameter in rewrite API calls to apply this learned voice',\n    createdAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "generate-report",
+      "name": "Generate Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 100]
+    }
+  ],
+  "connections": {
+    "webhook-voice-trigger": {
+      "main": [\n        [\n          {\n            \"node\": \"prepare-training-data\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "prepare-training-data": {\n      "main": [\n        [\n          {\n            \"node\": \"analyze-voice\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "analyze-voice": {\n      "main": [\n        [\n          {\n            \"node\": \"create-voice-profile\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "create-voice-profile": {\n      "main": [\n        [\n          {\n            \"node\": \"save-profile-db\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "save-profile-db": {\n      "main": [\n        [\n          {\n            \"node\": \"generate-report\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    }\n  },\n  "settings": {\n    \"timezone\": \"UTC\",\n    \"saveDataSuccessExecution\": \"all\",\n    \"saveDataErrorExecution\": \"all\",\n    \"executionOrder\": \"v1\"\n  },\n  "notes": "Sets up a brand voice profile by analyzing provided product descriptions. This profile can then be used in rewrite workflows to maintain consistent tone. Send POST request with: { storeId, descriptions: [\"desc1\", \"desc2\", ...] }"\n}

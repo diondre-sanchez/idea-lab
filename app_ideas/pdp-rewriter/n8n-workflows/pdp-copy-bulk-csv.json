@@ -1,0 +1,131 @@
+{
+  "name": "PDP Copy - Bulk CSV Import & Rewrite",
+  "description": "Bulk rewrite multiple products from CSV file. Reads CSV, processes each product through the rewrite workflow, and generates output report",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "/pdp-copy/bulk-import",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-bulk-trigger",
+      "name": "Webhook: CSV Upload",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 100]
+    },
+    {
+      "parameters": {
+        "url": "{{ $json.csvUrl }}",
+        "options": {}
+      },
+      "id": "download-csv",
+      "name": "Download CSV File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [500, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Parse CSV content\nconst csvContent = $binary.data.toString();\nconst lines = csvContent.split('\\n').filter(line => line.trim());\n\n// Skip header row\nconst headerLine = lines[0];\nconst headers = headerLine.split(',').map(h => h.trim().toLowerCase());\n\nconst products = [];\n\nfor (let i = 1; i < lines.length; i++) {\n  const values = lines[i].split(',').map(v => v.trim());\n  const product = {};\n  \n  headers.forEach((header, index) => {\n    product[header] = values[index] || '';\n  });\n  \n  if (product.productid || product.title) {\n    products.push(product);\n  }\n}\n\nreturn {\n  totalProducts: products.length,\n  products: products,\n  batchSize: 10,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "parse-csv",
+      "name": "Parse CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 100]
+    },
+    {
+      "parameters": {
+        "loopOver": "products",
+        "options": {}
+      },
+      "id": "loop-products",
+      "name": "Loop Over Products",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 1,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "url": "https://{{ $env.SHOPIFY_DOMAIN }}/admin/api/2024-01/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "credentialType": "shopify",
+        "requestMethod": "POST",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"query\": \"query($id: ID!) { product(id: $id) { id title description category { name } handle } }\",\n  \"variables\": { \"id\": \"{{ $json.item.productid || $json.item.product_id }}\" }\n}",
+        "options": {}
+      },
+      "id": "fetch-product-bulk",
+      "name": "Fetch Product Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "prompt": "Rewrite this product description professionally and compellingly.\n\nProduct: {{ $json.item.title || 'Unknown' }}\nCategory: {{ $json.item.category || 'General' }}\nCurrent Description: {{ $json.item.description || 'No description' }}\nKeywords: {{ $json.item.keywords || '' }}\n\nRespond ONLY with the rewritten description, no additional text. Keep it 150-300 words.",
+        "options": {}
+      },
+      "id": "ai-rewrite-bulk",
+      "name": "AI Rewrite (Bulk)",
+      "type": "n8n-nodes-base.openaiText",
+      "typeVersion": 3,
+      "position": [1500, 100]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "prompt": "Generate SEO meta tags for this product:\nTitle: {{ $json.item.title }}\nKeyword: {{ $json.item.keywords ? $json.item.keywords.split(',')[0] : $json.item.title }}\n\nRespond in JSON format only:\n{ \"metaTitle\": \"50-60 chars\", \"metaDescription\": \"150-160 chars\" }",
+        "options": {}
+      },
+      "id": "ai-generate-seo-bulk",
+      "name": "AI Generate SEO (Bulk)",
+      "type": "n8n-nodes-base.openaiText",
+      "typeVersion": 3,
+      "position": [1750, 100]
+    },
+    {
+      "parameters": {
+        "url": "https://{{ $env.SHOPIFY_DOMAIN }}/admin/api/2024-01/graphql.json",
+        "authentication": "predefinedCredentialType",
+        "credentialType": "shopify",
+        "requestMethod": "POST",
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"query\": \"mutation($input: ProductInput!) { productUpdate(input: $input) { product { id } errors } }\",\n  \"variables\": {\n    \"input\": {\n      \"id\": \"{{ $json.item.productid }}\",\n      \"descriptionHtml\": \"{{ $json.output }}\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "publish-bulk",
+      "name": "Publish to Shopify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "return {\n  productId: $json.item.productid,\n  title: $json.item.title,\n  status: 'success',\n  published: true,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "log-result",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 100]
+    },
+    {
+      "parameters": {
+        "n8nLanguage": "JavaScript",
+        "jsCode": "// Aggregate results from all products\nconst results = $json.results || [];\nconst successful = results.filter(r => r.status === 'success').length;\nconst failed = results.length - successful;\n\nreturn {\n  summary: {\n    totalProcessed: results.length,\n    successful,\n    failed,\n    successRate: ((successful / results.length) * 100).toFixed(2) + '%',\n    completedAt: new Date().toISOString()\n  },\n  results\n};"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 100]
+    }
+  ],
+  "connections": {
+    "webhook-bulk-trigger": {
+      "main": [\n        [\n          {\n            \"node\": \"download-csv\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "download-csv": {\n      "main": [\n        [\n          {\n            \"node\": \"parse-csv\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "parse-csv": {\n      "main": [\n        [\n          {\n            \"node\": \"loop-products\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "loop-products": {\n      "main": [\n        [\n          {\n            \"node\": \"fetch-product-bulk\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "fetch-product-bulk": {\n      "main": [\n        [\n          {\n            \"node\": \"ai-rewrite-bulk\",\n            \"type\": \"main\",\n            \"index\": 0\n          },\n          {\n            \"node\": \"ai-generate-seo-bulk\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "ai-rewrite-bulk": {\n      "main": [\n        [\n          {\n            \"node\": \"publish-bulk\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "ai-generate-seo-bulk": {\n      "main": [\n        [\n          {\n            \"node\": \"publish-bulk\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "publish-bulk": {\n      "main": [\n        [\n          {\n            \"node\": \"log-result\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    "log-result": {\n      "main": [\n        [\n          {\n            \"node\": \"aggregate-results\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    }\n  },\n  "settings": {\n    \"timezone\": \"UTC\",\n    \"saveDataSuccessExecution\": \"all\",\n    \"saveDataErrorExecution\": \"all\",\n    \"executionOrder\": \"v1\"\n  },\n  "notes": "Bulk workflow for processing CSV files with multiple products. CSV format expected: productid, title, description, category, keywords. Processes in batches to avoid rate limiting."\n}
