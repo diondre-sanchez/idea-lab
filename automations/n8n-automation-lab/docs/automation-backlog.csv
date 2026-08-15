@@ -1,0 +1,13 @@
+priority,category,automation,target_buyer,revenue_potential,difficulty,status
+P1,Local Business,Lead Intake + Follow-Up,Local service business,Very High,Medium,IDEA
+P1,E-commerce,Shopify Order Exception Escalation,Shopify merchant,High,Medium,IDEA
+P1,Security/IT,Security Alert Enrichment,Security team or MSP,Very High,Medium-High,IDEA
+P1,Operations,Client Onboarding Orchestrator,Agency or MSP,High,Medium,IDEA
+P2,Local Business,Missed-Call Text-Back,Local service business,Very High,Medium,IDEA
+P2,Local Business,Review Request Engine,Local service business,High,Low-Medium,IDEA
+P2,Security/IT,Vulnerability Ticket Router,Security or infrastructure team,High,Medium,IDEA
+P2,E-commerce,Customer Support Triage,E-commerce merchant,High,Medium,IDEA
+P2,Operations,Daily Owner Digest,SMB owner,High,Low,IDEA
+P3,Operations,Invoice Reminder Engine,SMB or agency,High,Medium,IDEA
+P3,E-commerce,VIP Customer Alert,Shopify merchant,Medium,Low,IDEA
+P3,Security/IT,Phishing / Domain Triage,Security team or MSP,High,Medium,IDEA
